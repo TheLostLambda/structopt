@@ -66,6 +66,7 @@ fn gen_augmentation(
     let mut subcmds = fields.iter().filter_map(|field| {
         let attrs = Attrs::from_field(
             field,
+            Some(parent_attribute),
             parent_attribute.casing(),
             parent_attribute.env_casing(),
         );
@@ -107,6 +108,7 @@ fn gen_augmentation(
     let args = fields.iter().filter_map(|field| {
         let attrs = Attrs::from_field(
             field,
+            Some(parent_attribute),
             parent_attribute.casing(),
             parent_attribute.env_casing(),
         );
@@ -233,6 +235,7 @@ fn gen_constructor(fields: &Punctuated<Field, Comma>, parent_attribute: &Attrs) 
     let fields = fields.iter().map(|field| {
         let attrs = Attrs::from_field(
             field,
+            Some(parent_attribute),
             parent_attribute.casing(),
             parent_attribute.env_casing(),
         );
@@ -378,6 +381,7 @@ fn gen_clap(attrs: &[Attribute]) -> GenOutput {
         Span::call_site(),
         attrs,
         Name::Assigned(LitStr::new(&name, Span::call_site())),
+        None,
         Sp::call_site(DEFAULT_CASING),
         Sp::call_site(DEFAULT_ENV_CASING),
     );
@@ -447,6 +451,7 @@ fn gen_augment_clap_enum(
             variant.span(),
             &variant.attrs,
             Name::Derived(variant.ident.clone()),
+            Some(parent_attribute),
             parent_attribute.casing(),
             parent_attribute.env_casing(),
         );
@@ -516,6 +521,7 @@ fn gen_from_subcommand(
             variant.span(),
             &variant.attrs,
             Name::Derived(variant.ident.clone()),
+            Some(parent_attribute),
             parent_attribute.casing(),
             parent_attribute.env_casing(),
         );
