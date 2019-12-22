@@ -972,22 +972,15 @@ pub trait StructOpt {
     // ** SUBJECT TO CHANGE WITHOUT NOTICE!!! **
 
     #[doc(hidden)]
-    fn is_subcommand() -> bool {
-        unimplemented!()
-    }
+    fn augment_clap<'a, 'b>(_app: clap::App<'a, 'b>) -> clap::App<'a, 'b>;
 
     #[doc(hidden)]
-    fn augment_clap<'a, 'b>(_app: clap::App<'a, 'b>) -> clap::App<'a, 'b> {
-        unimplemented!()
-    }
+    fn subcommand_settings<'a, 'b>(_app: clap::App<'a, 'b>) -> clap::App<'a, 'b>;
 
     #[doc(hidden)]
     fn from_subcommand<'a, 'b>(_sub: (&'b str, Option<&'b clap::ArgMatches<'a>>)) -> Option<Self>
     where
-        Self: Sized,
-    {
-        unimplemented!()
-    }
+        Self: Sized;
 }
 
 impl<T: StructOpt> StructOpt for Box<T> {
@@ -1005,8 +998,8 @@ impl<T: StructOpt> StructOpt for Box<T> {
     }
 
     #[doc(hidden)]
-    fn is_subcommand() -> bool {
-        <T as StructOpt>::is_subcommand()
+    fn subcommand_settings<'a, 'b>(app: clap::App<'a, 'b>) -> clap::App<'a, 'b> {
+        <T as StructOpt>::subcommand_settings(app)
     }
 
     #[doc(hidden)]

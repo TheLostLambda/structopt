@@ -20,6 +20,7 @@ use syn::{self, ext::IdentExt, spanned::Spanned, Attribute, Expr, Ident, LitStr,
 #[derive(Clone)]
 pub enum Kind {
     Arg(Sp<Ty>),
+    ExternalSubcommand(Sp<Ty>),
     Subcommand(Sp<Ty>),
     FlattenStruct,
     Skip(Option<Expr>),
@@ -266,8 +267,14 @@ impl Attrs {
                 }
 
                 Subcommand(ident) => {
-                    let ty = Sp::call_site(Ty::Other);
+                    let ty = Sp::call_site(Ty::Other); // will be patched later
                     let kind = Sp::new(Kind::Subcommand(ty), ident.span());
+                    self.set_kind(kind);
+                }
+
+                ExternalSubcommand(ident) => {
+                    let ty = Sp::call_site(Ty::Other); // will be patched later
+                    let kind = Sp::new(Kind::ExternalSubcommand(ty), ident.span());
                     self.set_kind(kind);
                 }
 
@@ -361,10 +368,12 @@ impl Attrs {
             );
         }
         match &*res.kind {
-            Kind::Subcommand(_) => abort!(res.kind.span(), "subcommand is only allowed on fields"),
-            Kind::FlattenStruct => abort!(res.kind.span(), "flatten is only allowed on fields"),
-            Kind::Skip(_) => abort!(res.kind.span(), "skip is only allowed on fields"),
-            Kind::Arg(_) => res,
+            Kind::Subcommand(_) => {
+                abort!(res.kind.span(), "`subcommand` is only allowed on fields")
+            }
+            Kind::FlattenStruct => abort!(res.kind.span(), "`flatten` is only allowed on fields"),
+            Kind::Skip(_) => abort!(res.kind.span(), "`skip` is only allowed on fields"),
+            Kind::Arg(_) | Kind::ExternalSubcommand(_) => res,
         }
     }
 
@@ -398,6 +407,10 @@ impl Attrs {
                     );
                 }
             }
+            Kind::ExternalSubcommand(_) => abort!(
+                res.kind.span(),
+                "`external_subcommand` must be placed on an enum variant, not on field"
+            ),
             Kind::Subcommand(_) => {
                 if res.has_custom_parser {
                     abort!(

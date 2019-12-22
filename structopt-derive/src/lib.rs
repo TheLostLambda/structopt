@@ -20,6 +20,8 @@ mod parse;
 mod spanned;
 mod ty;
 
+use crate::ty::is_simple_ty;
+use crate::ty::subty_if_name;
 use crate::{
     attrs::{Attrs, CasingStyle, Kind, Name, ParserKind},
     spanned::Sp,
@@ -70,27 +72,15 @@ fn gen_augmentation(
             parent_attribute.env_casing(),
         );
         let kind = attrs.kind();
-        if let Kind::Subcommand(ty) = &*kind {
-            let subcmd_type = match (**ty, sub_type(&field.ty)) {
-                (Ty::Option, Some(sub_type)) => sub_type,
-                _ => &field.ty,
-            };
-            let required = if **ty == Ty::Option {
-                quote!()
-            } else {
-                quote_spanned! { kind.span()=>
-                    let #app_var = #app_var.setting(
-                        ::structopt::clap::AppSettings::SubcommandRequiredElseHelp
-                    );
-                }
-            };
+        if let Kind::Subcommand(_) = &*kind {
+            let subcmd_type = subty_if_name(&field.ty, "Option").unwrap_or(&field.ty);
+            let subcmd_type = quote!(<#subcmd_type as ::structopt::StructOpt>);
 
-            let span = field.span();
             let ts = quote! {
-                let #app_var = <#subcmd_type as ::structopt::StructOpt>::augment_clap( #app_var );
-                #required
+                let #app_var = #subcmd_type::augment_clap(#app_var);
+                let #app_var = #subcmd_type::subcommand_settings(#app_var);
             };
-            Some((span, ts))
+            Some((field.span(), ts))
         } else {
             None
         }
@@ -112,18 +102,18 @@ fn gen_augmentation(
         );
         let kind = attrs.kind();
         match &*kind {
-            Kind::Subcommand(_) | Kind::Skip(_) => None,
+            Kind::Subcommand(_) | Kind::ExternalSubcommand(_) | Kind::Skip(_) => None,
+
             Kind::FlattenStruct => {
                 let ty = &field.ty;
+                let ty = quote_spanned!(kind.span()=> <#ty as ::structopt::StructOpt>);
+
                 Some(quote_spanned! { kind.span()=>
-                    let #app_var = <#ty as ::structopt::StructOpt>::augment_clap(#app_var);
-                    let #app_var = if <#ty as ::structopt::StructOpt>::is_subcommand() {
-                        #app_var.setting(::structopt::clap::AppSettings::SubcommandRequiredElseHelp)
-                    } else {
-                        #app_var
-                    };
+                    let #app_var = #ty::augment_clap(#app_var);
+                    let #app_var = #ty::subcommand_settings(#app_var);
                 })
             }
+
             Kind::Arg(ty) => {
                 let convert_type = match **ty {
                     Ty::Vec | Ty::Option => sub_type(&field.ty).unwrap_or(&field.ty),
@@ -239,7 +229,7 @@ fn gen_constructor(fields: &Punctuated<Field, Comma>, parent_attribute: &Attrs) 
         let field_name = field.ident.as_ref().unwrap();
         let kind = attrs.kind();
         match &*kind {
-            Kind::Subcommand(ty) => {
+            Kind::Subcommand(ty) | Kind::ExternalSubcommand(ty) => {
                 let subcmd_type = match (**ty, sub_type(&field.ty)) {
                     (Ty::Option, Some(sub_type)) => sub_type,
                     _ => &field.ty,
@@ -451,25 +441,25 @@ fn gen_augment_clap_enum(
             parent_attribute.env_casing(),
         );
         let app_var = Ident::new("subcommand", Span::call_site());
-        let arg_block = match variant.fields {
-            Named(ref fields) => gen_augmentation(&fields.named, &app_var, &attrs),
-            Unit => quote!( #app_var ),
-            Unnamed(FieldsUnnamed { ref unnamed, .. }) if unnamed.len() == 1 => {
-                let ty = &unnamed[0];
-                quote_spanned! { ty.span()=>
-                    {
-                        let #app_var = <#ty as ::structopt::StructOpt>::augment_clap(#app_var);
-                        if <#ty as ::structopt::StructOpt>::is_subcommand() {
-                            #app_var.setting(
-                                ::structopt::clap::AppSettings::SubcommandRequiredElseHelp
-                            )
-                        } else {
+        let arg_block = if let Kind::ExternalSubcommand(_) = *attrs.kind() {
+            quote!(#app_var)
+        } else {
+            match variant.fields {
+                Named(ref fields) => gen_augmentation(&fields.named, &app_var, &attrs),
+                Unit => quote!( #app_var ),
+                Unnamed(FieldsUnnamed { ref unnamed, .. }) if unnamed.len() == 1 => {
+                    let ty = &unnamed[0];
+                    let ty = quote_spanned!(ty.span()=> <#ty as ::structopt::StructOpt>);
+                    quote_spanned! { ty.span()=>
+                        {
+                            let #app_var = #ty::augment_clap(#app_var);
+                            let #app_var = #ty::subcommand_settings(#app_var);
                             #app_var
                         }
                     }
                 }
+                Unnamed(..) => abort_call_site!("{}: tuple enums are not supported", variant.ident),
             }
-            Unnamed(..) => abort_call_site!("{}: tuple enums are not supported", variant.ident),
         };
 
         let name = attrs.cased_name();
@@ -504,49 +494,136 @@ fn gen_from_clap_enum(name: &Ident) -> TokenStream {
     }
 }
 
+/// -> (result, external_subcommand_detected)
 fn gen_from_subcommand(
     name: &Ident,
     variants: &Punctuated<Variant, Comma>,
     parent_attribute: &Attrs,
-) -> TokenStream {
+) -> (TokenStream, bool) {
     use syn::Fields::*;
 
-    let match_arms = variants.iter().map(|variant| {
-        let attrs = Attrs::from_struct(
-            variant.span(),
-            &variant.attrs,
-            Name::Derived(variant.ident.clone()),
-            parent_attribute.casing(),
-            parent_attribute.env_casing(),
-        );
-        let sub_name = attrs.cased_name();
-        let variant_name = &variant.ident;
-        let constructor_block = match variant.fields {
-            Named(ref fields) => gen_constructor(&fields.named, &attrs),
-            Unit => quote!(),
-            Unnamed(ref fields) if fields.unnamed.len() == 1 => {
-                let ty = &fields.unnamed[0];
-                quote!( ( <#ty as ::structopt::StructOpt>::from_clap(matches) ) )
+    let mut wildcard_arm = None;
+
+    let match_arms: Vec<_> = variants
+        .iter()
+        .filter_map(|variant| {
+            let attrs = Attrs::from_struct(
+                variant.span(),
+                &variant.attrs,
+                Name::Derived(variant.ident.clone()),
+                parent_attribute.casing(),
+                parent_attribute.env_casing(),
+            );
+
+            let kind = attrs.kind();
+            let sub_name = attrs.cased_name();
+            let variant_name = &variant.ident;
+
+            if let Kind::ExternalSubcommand(_) = *kind {
+                if wildcard_arm.is_some() {
+                    abort!(
+                        kind.span(),
+                        "only one enum variant can be marked as `external_subcommand`";
+                        note = "that's the second"
+                    );
+                }
+
+                let (sub_args_some, sub_args_none) = match variant.fields {
+                    Unnamed(ref fields) if fields.unnamed.len() == 1 => {
+                        let ty = &fields.unnamed[0].ty;
+
+                        if let Some(subty) = subty_if_name(ty, "Vec") {
+                            let (values_of, string_ty) = if is_simple_ty(subty, "String") {
+                                (
+                                    quote_spanned!(ty.span()=> values_of),
+                                    quote_spanned!(ty.span()=> ::std::string::String),
+                                )
+                            } else {
+                                (
+                                    quote_spanned!(ty.span()=> values_of_os),
+                                    quote_spanned!(ty.span()=> ::std::ffi::OsString),
+                                )
+                            };
+
+                            let some = quote_spanned! { ty.span()=>
+                                ::std::iter::once(#string_ty::from(external_subcommand))
+                                .chain(matches.#values_of("")
+                                    .unwrap()
+                                    .map(#string_ty::from))
+                                .collect()
+                            };
+                            let none = quote_spanned! { ty.span()=>
+                                vec![#string_ty::from(external_subcommand)]
+                            };
+
+                            (some, none)
+                        } else {
+                            abort!(
+                                variant.span(),
+                                "the variant marked as `external_subcommand` must be a tuple \
+                                 with exactly one type, either `Vec<String>` or `Vec<OsString>`"
+                            )
+                        }
+                    }
+                    _ => abort!(
+                        variant.span(),
+                        "the variant marked as `external_subcommand` must be a tuple \
+                         with exactly one type, either `Vec<String>` or `Vec<OsString>`"
+                    ),
+                };
+
+                wildcard_arm = Some(quote! {
+                    (external_subcommand, Some(matches)) =>
+                        Some( #name::#variant_name(#sub_args_some) ),
+                    (external_subcommand, None) =>
+                        Some( #name::#variant_name(#sub_args_none) ),
+                });
+
+                None
+            } else {
+                let constructor_block = match variant.fields {
+                    Named(ref fields) => gen_constructor(&fields.named, &attrs),
+                    Unit => quote!(),
+                    Unnamed(ref fields) if fields.unnamed.len() == 1 => {
+                        let ty = &fields.unnamed[0];
+                        quote_spanned!(kind.span()=>
+                            ( <#ty as ::structopt::StructOpt>::from_clap(matches) )
+                        )
+                    }
+                    Unnamed(ref fields) => abort!(
+                        variant.span(),
+                        "{}: tuple enums with {} types are not supported",
+                        variant.ident,
+                        if fields.unnamed.len() == 0 {
+                            "no"
+                        } else {
+                            "multiple"
+                        }
+                    ),
+                };
+
+                Some(quote! {
+                    (#sub_name, Some(matches)) =>
+                        Some(#name :: #variant_name #constructor_block)
+                })
             }
-            Unnamed(..) => abort_call_site!("{}: tuple enums are not supported", variant.ident),
-        };
+        })
+        .collect();
 
-        quote! {
-            (#sub_name, Some(matches)) =>
-                Some(#name :: #variant_name #constructor_block)
-        }
-    });
-
-    quote! {
+    let external_subcommand_detected = wildcard_arm.is_some();
+    let wildcard_arm = wildcard_arm.unwrap_or_else(|| quote!(_ => None));
+    let res = quote! {
         fn from_subcommand<'a, 'b>(
             sub: (&'b str, Option<&'b ::structopt::clap::ArgMatches<'a>>)
         ) -> Option<Self> {
             match sub {
-                #( #match_arms ),*,
-                _ => None
+                #( #match_arms, )*
+                #wildcard_arm
             }
         }
-    }
+    };
+
+    (res, external_subcommand_detected)
 }
 
 #[cfg(feature = "paw")]
@@ -572,11 +649,14 @@ fn impl_structopt_for_struct(
     attrs: &[Attribute],
 ) -> TokenStream {
     let basic_clap_app_gen = gen_clap_struct(attrs);
-    let augment_clap = gen_augment_clap(fields, &basic_clap_app_gen.attrs);
-    let from_clap = gen_from_clap(name, fields, &basic_clap_app_gen.attrs);
+    let clap_tokens = basic_clap_app_gen.tokens;
+    let gen_attrs = basic_clap_app_gen.attrs;
+
+    let augment_clap = gen_augment_clap(fields, &gen_attrs);
+    let from_clap = gen_from_clap(name, fields, &gen_attrs);
+    let subcommand_settings = gen_subcommand_settings(false, false);
     let paw_impl = gen_paw_impl(name);
 
-    let clap_tokens = basic_clap_app_gen.tokens;
     quote! {
         #[allow(unused_variables)]
         #[allow(unknown_lints)]
@@ -586,10 +666,40 @@ fn impl_structopt_for_struct(
             #clap_tokens
             #from_clap
             #augment_clap
-            fn is_subcommand() -> bool { false }
+            #subcommand_settings
+
+            fn from_subcommand<'a, 'b>(
+                _sub: (&'b str, Option<&'b ::structopt::clap::ArgMatches<'a>>)
+            ) -> Option<Self>
+            where
+                Self: Sized
+            {
+                panic!("BUG: structopt attempted to call from_subcommand with struct.\n\n\
+                    If you see this, please file a report: \
+                    https://github.com/TeXitoi/structopt/issues")
+            }
         }
 
         #paw_impl
+    }
+}
+
+fn gen_subcommand_settings(is_subcommand: bool, allow_external_subcommands: bool) -> TokenStream {
+    let app_ty = quote!(::structopt::clap::App<'a, 'b>);
+    quote! {
+        fn subcommand_settings<'a, 'b>(app: #app_ty) -> #app_ty {
+            if #is_subcommand {
+                if #allow_external_subcommands {
+                    app.setting(
+                        ::structopt::clap::AppSettings::AllowExternalSubcommands)
+                } else {
+                    app.setting(
+                        ::structopt::clap::AppSettings::SubcommandRequiredElseHelp)
+                }
+            } else {
+                app
+            }
+        }
     }
 }
 
@@ -599,13 +709,15 @@ fn impl_structopt_for_enum(
     attrs: &[Attribute],
 ) -> TokenStream {
     let basic_clap_app_gen = gen_clap_enum(attrs);
-
-    let augment_clap = gen_augment_clap_enum(variants, &basic_clap_app_gen.attrs);
-    let from_clap = gen_from_clap_enum(name);
-    let from_subcommand = gen_from_subcommand(name, variants, &basic_clap_app_gen.attrs);
-    let paw_impl = gen_paw_impl(name);
-
+    let gen_attrs = basic_clap_app_gen.attrs;
     let clap_tokens = basic_clap_app_gen.tokens;
+
+    let augment_clap = gen_augment_clap_enum(variants, &gen_attrs);
+    let from_clap = gen_from_clap_enum(name);
+    let (from_subcommand, extern_subcmd) = gen_from_subcommand(name, variants, &gen_attrs);
+    let paw_impl = gen_paw_impl(name);
+    let subcommand_settings = gen_subcommand_settings(true, extern_subcmd);
+
     quote! {
         #[allow(unknown_lints)]
         #[allow(unused_variables, dead_code, unreachable_code)]
@@ -615,7 +727,7 @@ fn impl_structopt_for_enum(
             #from_clap
             #augment_clap
             #from_subcommand
-            fn is_subcommand() -> bool { true }
+            #subcommand_settings
         }
 
         #paw_impl
@@ -633,6 +745,20 @@ fn impl_structopt(input: &DeriveInput) -> TokenStream {
                 unimplemented!()
             }
             fn from_clap(_matches: &::structopt::clap::ArgMatches) -> Self {
+                unimplemented!()
+            }
+            #[doc(hidden)]
+            fn augment_clap<'a, 'b>(_app: clap::App<'a, 'b>) -> clap::App<'a, 'b> {
+                unimplemented!()
+            }
+            #[doc(hidden)]
+            fn subcommand_settings<'a, 'b>(_app: clap::App<'a, 'b>) -> clap::App<'a, 'b> {
+                unimplemented!()
+            }
+            #[doc(hidden)]
+            fn from_subcommand<'a, 'b>(
+                _sub: (&'b str, Option<&'b clap::ArgMatches<'a>>)) -> Option<Self>
+            {
                 unimplemented!()
             }
         }

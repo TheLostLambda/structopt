@@ -11,28 +11,28 @@ mod utils;
 use structopt::StructOpt;
 use utils::*;
 
-#[derive(StructOpt, PartialEq, Debug)]
-enum Opt {
-    /// Fetch stuff from GitHub
-    Fetch {
-        #[structopt(long)]
-        all: bool,
-        #[structopt(short, long)]
-        /// Overwrite local branches.
-        force: bool,
-        repo: String,
-    },
-
-    Add {
-        #[structopt(short, long)]
-        interactive: bool,
-        #[structopt(short, long)]
-        verbose: bool,
-    },
-}
-
 #[test]
-fn test_fetch() {
+fn it_works() {
+    #[derive(StructOpt, PartialEq, Debug)]
+    enum Opt {
+        /// Fetch stuff from GitHub
+        Fetch {
+            #[structopt(long)]
+            all: bool,
+            #[structopt(short, long)]
+            /// Overwrite local branches.
+            force: bool,
+            repo: String,
+        },
+
+        Add {
+            #[structopt(short, long)]
+            interactive: bool,
+            #[structopt(short, long)]
+            verbose: bool,
+        },
+    }
+
     assert_eq!(
         Opt::Fetch {
             all: true,
@@ -49,10 +49,6 @@ fn test_fetch() {
         },
         Opt::from_clap(&Opt::clap().get_matches_from(&["test", "fetch", "-f", "origin"]))
     );
-}
-
-#[test]
-fn test_add() {
     assert_eq!(
         Opt::Add {
             interactive: false,
@@ -67,100 +63,98 @@ fn test_add() {
         },
         Opt::from_clap(&Opt::clap().get_matches_from(&["test", "add", "-i", "-v"]))
     );
-}
 
-#[test]
-fn test_no_parse() {
-    let result = Opt::clap().get_matches_from_safe(&["test", "badcmd", "-i", "-v"]);
-    assert!(result.is_err());
-
-    let result = Opt::clap().get_matches_from_safe(&["test", "add", "--badoption"]);
-    assert!(result.is_err());
-
-    let result = Opt::clap().get_matches_from_safe(&["test"]);
-    assert!(result.is_err());
-}
-
-#[derive(StructOpt, PartialEq, Debug)]
-enum Opt2 {
-    DoSomething { arg: String },
+    assert!(Opt::clap()
+        .get_matches_from_safe(&["test", "badcmd", "-i", "-v"])
+        .is_err());
+    assert!(Opt::clap()
+        .get_matches_from_safe(&["test", "add", "--badoption"])
+        .is_err());
+    assert!(Opt::clap().get_matches_from_safe(&["test"]).is_err());
 }
 
 #[test]
 /// This test is specifically to make sure that hyphenated subcommands get
 /// processed correctly.
 fn test_hyphenated_subcommands() {
+    #[derive(StructOpt, PartialEq, Debug)]
+    enum Opt {
+        DoSomething { arg: String },
+    }
+
     assert_eq!(
-        Opt2::DoSomething {
+        Opt::DoSomething {
             arg: "blah".to_string()
         },
-        Opt2::from_clap(&Opt2::clap().get_matches_from(&["test", "do-something", "blah"]))
+        Opt::from_clap(&Opt::clap().get_matches_from(&["test", "do-something", "blah"]))
     );
-}
-
-#[derive(StructOpt, PartialEq, Debug)]
-enum Opt3 {
-    Add,
-    Init,
-    Fetch,
 }
 
 #[test]
 fn test_null_commands() {
-    assert_eq!(
-        Opt3::Add,
-        Opt3::from_clap(&Opt3::clap().get_matches_from(&["test", "add"]))
-    );
-    assert_eq!(
-        Opt3::Init,
-        Opt3::from_clap(&Opt3::clap().get_matches_from(&["test", "init"]))
-    );
-    assert_eq!(
-        Opt3::Fetch,
-        Opt3::from_clap(&Opt3::clap().get_matches_from(&["test", "fetch"]))
-    );
-}
+    #[derive(StructOpt, PartialEq, Debug)]
+    enum Opt {
+        Add,
+        Init,
+        Fetch,
+    }
 
-#[derive(StructOpt, PartialEq, Debug)]
-#[structopt(about = "Not shown")]
-struct Add {
-    file: String,
-}
-/// Not shown
-#[derive(StructOpt, PartialEq, Debug)]
-struct Fetch {
-    remote: String,
-}
-#[derive(StructOpt, PartialEq, Debug)]
-enum Opt4 {
-    // Not shown
-    /// Add a file
-    Add(Add),
-    Init,
-    /// download history from remote
-    Fetch(Fetch),
+    assert_eq!(
+        Opt::Add,
+        Opt::from_clap(&Opt::clap().get_matches_from(&["test", "add"]))
+    );
+    assert_eq!(
+        Opt::Init,
+        Opt::from_clap(&Opt::clap().get_matches_from(&["test", "init"]))
+    );
+    assert_eq!(
+        Opt::Fetch,
+        Opt::from_clap(&Opt::clap().get_matches_from(&["test", "fetch"]))
+    );
 }
 
 #[test]
 fn test_tuple_commands() {
+    #[derive(StructOpt, PartialEq, Debug)]
+    #[structopt(about = "Not shown")]
+    struct Add {
+        file: String,
+    }
+
+    /// Not shown
+    #[derive(StructOpt, PartialEq, Debug)]
+    struct Fetch {
+        remote: String,
+    }
+
+    #[derive(StructOpt, PartialEq, Debug)]
+    enum Opt {
+        // Not shown
+        /// Add a file
+        Add(Add),
+        Init,
+        /// download history from remote
+        Fetch(Fetch),
+    }
+
     assert_eq!(
-        Opt4::Add(Add {
+        Opt::Add(Add {
             file: "f".to_string()
         }),
-        Opt4::from_clap(&Opt4::clap().get_matches_from(&["test", "add", "f"]))
+        Opt::from_clap(&Opt::clap().get_matches_from(&["test", "add", "f"]))
     );
     assert_eq!(
-        Opt4::Init,
-        Opt4::from_clap(&Opt4::clap().get_matches_from(&["test", "init"]))
+        Opt::Init,
+        Opt::from_clap(&Opt::clap().get_matches_from(&["test", "init"]))
     );
     assert_eq!(
-        Opt4::Fetch(Fetch {
+        Opt::Fetch(Fetch {
             remote: "origin".to_string()
         }),
-        Opt4::from_clap(&Opt4::clap().get_matches_from(&["test", "fetch", "origin"]))
+        Opt::from_clap(&Opt::clap().get_matches_from(&["test", "fetch", "origin"]))
     );
 
-    let output = get_long_help::<Opt4>();
+    let output = get_long_help::<Opt>();
 
     assert!(output.contains("download history from remote"));
     assert!(output.contains("Add a file"));
@@ -210,4 +204,94 @@ fn flatten_enum() {
             sub_cmd: SubCmd::Foo
         }
     );
+}
+
+#[test]
+fn external_subcommand_string() {
+    #[derive(StructOpt, Debug, PartialEq)]
+    struct Opt {
+        #[structopt(flatten)]
+        sub_cmd: SubCmd,
+    }
+    #[derive(StructOpt, Debug, PartialEq)]
+    enum SubCmd {
+        Foo {
+            #[structopt(long)]
+            flag: bool,
+            #[structopt(long)]
+            arg: u32,
+        },
+
+        #[structopt(external_subcommand)]
+        Other(Vec<String>),
+    }
+
+    assert_eq!(
+        Opt::from_iter(&["test", "foo", "--flag", "--arg=0"]),
+        Opt {
+            sub_cmd: SubCmd::Foo { flag: true, arg: 0 }
+        }
+    );
+
+    assert_eq!(
+        Opt::from_iter(&["test", "bar", "--flag", "--arg=0"]),
+        Opt {
+            sub_cmd: SubCmd::Other(vec!["bar".into(), "--flag".into(), "--arg=0".into()])
+        }
+    );
+    assert_eq!(
+        Opt::from_iter(&["test"]),
+        Opt {
+            sub_cmd: SubCmd::Other(vec!["".into()])
+        }
+    );
+}
+
+#[test]
+fn external_subcommand_os_string() {
+    use std::ffi::OsString;
+
+    #[derive(StructOpt, Debug, PartialEq)]
+    struct Opt {
+        #[structopt(flatten)]
+        sub_cmd: SubCmd,
+    }
+    #[derive(StructOpt, Debug, PartialEq)]
+    enum SubCmd {
+        Foo {
+            #[structopt(long)]
+            flag: bool,
+            #[structopt(long)]
+            arg: u32,
+        },
+
+        #[structopt(external_subcommand)]
+        Other(Vec<OsString>),
+    }
+
+    assert_eq!(
+        Opt::from_iter(&["test", "foo", "--flag", "--arg=0"]),
+        Opt {
+            sub_cmd: SubCmd::Foo { flag: true, arg: 0 }
+        }
+    );
+
+    assert_eq!(
+        Opt::from_iter(&["test", "bar", "--flag", "--arg=0"]),
+        Opt {
+            sub_cmd: SubCmd::Other(vec![
+                OsString::from("bar".to_string()),
+                OsString::from("--flag".to_string()),
+                OsString::from("--arg=0".to_string())
+            ])
+        }
+    );
+    assert_eq!(
+        Opt::from_iter(&["test"]),
+        Opt {
+            sub_cmd: SubCmd::Other(vec![OsString::from("".to_string())])
+        }
+    );
+
+    assert!(Opt::from_iter_safe(&["test", "--foo"]).is_err());
 }
