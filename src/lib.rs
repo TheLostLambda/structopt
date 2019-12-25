@@ -973,20 +973,20 @@ pub trait StructOpt {
 
     #[doc(hidden)]
     fn is_subcommand() -> bool {
-        unimplemented!()
+        false
     }
 
     #[doc(hidden)]
-    fn augment_clap<'a, 'b>(_app: clap::App<'a, 'b>) -> clap::App<'a, 'b> {
-        unimplemented!()
+    fn augment_clap<'a, 'b>(app: clap::App<'a, 'b>) -> clap::App<'a, 'b> {
+        app
     }
 
     #[doc(hidden)]
-    fn from_subcommand<'a, 'b>(_sub: (&'b str, Option<&'b clap::ArgMatches<'a>>)) -> Option<Self>
+    fn from_subcommand<'a, 'b>(sub: (&'b str, Option<&'b clap::ArgMatches<'a>>)) -> Option<Self>
     where
         Self: Sized,
     {
-        unimplemented!()
+        sub.1.map(<Self as StructOpt>::from_clap)
     }
 }
 
