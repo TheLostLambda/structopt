@@ -26,9 +26,14 @@ paw = ["structopt-derive/paw"]
 [badges]
 travis-ci = { repository = "TeXitoi/structopt" }
 
-[dependencies]
-clap = { version = "2.33", default-features = false }
-structopt-derive = { path = "structopt-derive", version = "0.3.6" }
+[dependencies.clap]
+git = "https://github.com/TheLostLambda/clap.git"
+branch = "v2-master"
+default-features = false
+
+[dependencies.structopt-derive]
+path = "structopt-derive"
+version = "0.3.6"
 
 [dev-dependencies]
 trybuild = "1.0.5"
